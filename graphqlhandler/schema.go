@@ -60,7 +60,7 @@ func init() {
 				Resolve: healthCheckResolver,
 			},
 			"getLoanApplication": &graphql.Field{
-				Type: loanApplicationType, // Nullable as per schema
+				Type: GetLoanApplicationType(), // Nullable as per schema
 				Args: graphql.FieldConfigArgument{
 					"uuid": &graphql.ArgumentConfig{
 						Type: graphql.NewNonNull(graphql.ID),
