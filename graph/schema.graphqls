@@ -1,0 +1,99 @@
+# Enums
+enum CollateralCategory {
+  CAR
+  MOTORCYCLE
+}
+
+# Scalars for validation (typically implemented with custom scalar resolvers)
+scalar Date
+scalar Email
+
+# Address type
+input AddressInput {
+  street: String! # Max 200 chars
+  city: String!   # Max 100 chars
+  zipcode: String! # 3-10 chars
+}
+
+type Address {
+  street: String!
+  city: String!
+  zipcode: String!
+}
+
+# Customer data
+input CustomerInput {
+  full_name: String! # Alphabet + space, 3-100 chars
+  date_of_birth: Date!
+  id_number: String! # Max 25 chars
+  email: Email
+  phone: String! # 6-30 digits
+  address: AddressInput!
+}
+
+type Customer {
+  full_name: String!
+  date_of_birth: Date!
+  id_number: String!
+  email: Email
+  phone: String!
+  address: Address!
+}
+
+# Collateral
+input CollateralInput {
+  category: CollateralCategory!
+  brand: String!
+  variant: String!
+  manufacturing_year: Int! # 2020 to current year
+  is_document_complete: Boolean!
+}
+
+type Collateral {
+  category: CollateralCategory!
+  brand: String!
+  variant: String!
+  manufacturing_year: Int!
+  is_document_complete: Boolean!
+}
+
+# Proposed Loan
+input ProposedLoanInput {
+  tenure: Int! # Divisible by 3, 3-60
+  amount: Float! # Min 100, Max 50000
+}
+
+type ProposedLoan {
+  tenure: Int!
+  amount: Float!
+}
+
+# Loan Application
+input LoanApplicationDraftInput {
+  proposed_loan: ProposedLoanInput!
+  collateral: CollateralInput!
+  customer: CustomerInput!
+}
+
+type LoanApplication {
+  uuid: ID!
+  status: String! # e.g., DRAFT, SUBMITTED
+  proposed_loan: ProposedLoan!
+  collateral: Collateral!
+  customer: Customer!
+  created_at: String!
+  updated_at: String!
+}
+
+# Queries
+type Query {
+  healthCheck: String!
+  getLoanApplication(uuid: ID!): LoanApplication
+}
+
+# Mutations
+type Mutation {
+  createLoanApplicationDraft(data: LoanApplicationDraftInput!): ID! # Returns UUID
+  submitLoanApplication(uuid: ID!): Boolean! # True if success
+  cancelLoanApplication(uuid: ID!): Boolean! # True if success
+}

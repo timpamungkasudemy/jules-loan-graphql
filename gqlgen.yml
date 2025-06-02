@@ -1,0 +1,34 @@
+schema:
+  - graph/schema.graphqls # Path to your GraphQL schema
+
+exec:
+  layout: follow-schema
+  dir: graph/generated # Output directory for generated files
+  package: generated   # Go package name for generated files
+
+model:
+  package: graph/model # Go package name for model files
+  filename: models_gen.go # Output filename for models
+
+resolver:
+  layout: follow-schema
+  dir: graph # Output directory for resolver files
+  package: graph   # Go package name for resolver files
+  filename: schema.resolvers.go
+  type: Resolver
+
+autobind: [] # Optional: autobind models from other packages
+
+models:
+  ID:
+    model:
+      - github.com/99designs/gqlgen/graphql.ID
+  Int:
+    model:
+      - github.com/99designs/gqlgen/graphql.Int
+  Date:
+    model:
+      - github.com/timpamungkas/loangraphql/graph.Date
+  Email:
+    model:
+      - github.com/timpamungkas/loangraphql/graph.Email
