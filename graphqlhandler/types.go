@@ -143,9 +143,20 @@ func GetLoanApplicationType() *graphql.Object {
 	// However, with all types in this file, direct use of loanApplicationType should be fine after init() runs.
 	// For safety and to ensure it's initialized, especially if types were split into more files:
 	if loanApplicationType == nil {
-		// This case should ideally not happen if init() functions are correctly managed by Go runtime.
-		// Re-run init logic or panic if critical. For now, let's assume init() handles it.
-		// The init() function for loanApplicationType should handle its setup.
+		// Explicitly initialize if it hasn't been already.
+		// This mirrors the logic in the init() function.
+		loanApplicationType = graphql.NewObject(graphql.ObjectConfig{
+			Name: "LoanApplication",
+			Fields: graphql.Fields{
+				"uuid":          &graphql.Field{Type: graphql.NewNonNull(graphql.ID)},
+				"status":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+				"proposed_loan": &graphql.Field{Type: graphql.NewNonNull(proposedLoanType)},
+				"collateral":    &graphql.Field{Type: graphql.NewNonNull(collateralType)},
+				"customer":      &graphql.Field{Type: graphql.NewNonNull(customerType)},
+				"created_at":    &graphql.Field{Type: graphql.NewNonNull(graphql.String)}, 
+				"updated_at":    &graphql.Field{Type: graphql.NewNonNull(graphql.String)}, 
+			},
+		})
 	}
 	return loanApplicationType
 }
