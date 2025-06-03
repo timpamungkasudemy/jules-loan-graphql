@@ -121,8 +121,14 @@ func init() { // Use init to resolve potential circular dependencies if any type
 			"proposed_loan": &graphql.Field{Type: graphql.NewNonNull(proposedLoanType)},
 			"collateral":    &graphql.Field{Type: graphql.NewNonNull(collateralType)},
 			"customer":      &graphql.Field{Type: graphql.NewNonNull(customerType)},
-			"created_at":    &graphql.Field{Type: graphql.NewNonNull(graphql.String)}, // Using String for simplicity
-			"updated_at":    &graphql.Field{Type: graphql.NewNonNull(graphql.String)}, // Using String for simplicity
+			"created_at": &graphql.Field{
+				Type:    graphql.NewNonNull(graphql.String),
+				Resolve: timeFormatterResolver, // Assign the resolver here
+			},
+			"updated_at": &graphql.Field{
+				Type:    graphql.NewNonNull(graphql.String),
+				Resolve: timeFormatterResolver, // Assign the resolver here
+			},
 		},
 	})
 }
@@ -153,8 +159,14 @@ func GetLoanApplicationType() *graphql.Object {
 				"proposed_loan": &graphql.Field{Type: graphql.NewNonNull(proposedLoanType)},
 				"collateral":    &graphql.Field{Type: graphql.NewNonNull(collateralType)},
 				"customer":      &graphql.Field{Type: graphql.NewNonNull(customerType)},
-				"created_at":    &graphql.Field{Type: graphql.NewNonNull(graphql.String)}, 
-				"updated_at":    &graphql.Field{Type: graphql.NewNonNull(graphql.String)}, 
+				"created_at": &graphql.Field{
+					Type:    graphql.NewNonNull(graphql.String),
+					Resolve: timeFormatterResolver, // Assign the resolver here
+				},
+				"updated_at": &graphql.Field{
+					Type:    graphql.NewNonNull(graphql.String),
+					Resolve: timeFormatterResolver, // Assign the resolver here
+				},
 			},
 		})
 	}

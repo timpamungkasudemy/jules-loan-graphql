@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/graphql-go/graphql"
-	"github.com/timpamungkas/loangraphql/db" // Added for DBService
-	// "github.com/google/uuid" // No longer needed here, DB layer handles UUID generation
+	"github.com/timpamungkas/loangraphql/db"    // Added for DBService
+	"github.com/timpamungkas/loangraphql/model" // Added for model types
 )
 
 // Resolver struct holds dependencies for resolver methods, like a DB connection.
@@ -126,59 +126,56 @@ func (r *Resolver) CreateLoanApplicationDraft(p graphql.ResolveParams) (interfac
 		return nil, fmt.Errorf("missing 'data' argument")
 	}
 
-	proposedLoanInput, _ := dataArg["proposed_loan"].(map[string]interface{})
-	collateralInput, _ := dataArg["collateral"].(map[string]interface{})
-	customerInput, _ := dataArg["customer"].(map[string]interface{})
+	proposedLoanMap, _ := dataArg["proposed_loan"].(map[string]interface{})
+	collateralMap, _ := dataArg["collateral"].(map[string]interface{})
+	customerMap, _ := dataArg["customer"].(map[string]interface{})
 
-	if err := validateProposedLoanInput(proposedLoanInput); err != nil {
+	if err := validateProposedLoanInput(proposedLoanMap); err != nil {
 		return nil, fmt.Errorf("invalid proposed_loan: %w", err)
 	}
-	if err := validateCollateralInput(collateralInput); err != nil {
+	if err := validateCollateralInput(collateralMap); err != nil {
 		return nil, fmt.Errorf("invalid collateral: %w", err)
 	}
-	if err := validateCustomerInput(customerInput); err != nil {
+	if err := validateCustomerInput(customerMap); err != nil {
 		return nil, fmt.Errorf("invalid customer: %w", err)
 	}
 
-	customerAddrMap, _ := customerInput["address"].(map[string]interface{})
-
-	// Ensure email is correctly handled if missing from input (GraphQL might omit it if not provided by client)
+	customerAddrMap, _ := customerMap["address"].(map[string]interface{})
 	emailStr := ""
-	if emailVal, ok := customerInput["email"]; ok {
+	if emailVal, ok := customerMap["email"]; ok {
 		emailStr, _ = emailVal.(string)
 	}
 
-	customerData := CustomerData{
-		FullName:    customerInput["full_name"].(string),
-		DateOfBirth: customerInput["date_of_birth"].(string),
-		IDNumber:    customerInput["id_number"].(string),
+	customerIn := model.CustomerInput{
+		FullName:    customerMap["full_name"].(string),
+		DateOfBirth: customerMap["date_of_birth"].(string),
+		IDNumber:    customerMap["id_number"].(string),
 		Email:       emailStr,
-		Phone:       customerInput["phone"].(string),
-		Address: AddressData{
+		Phone:       customerMap["phone"].(string),
+		Address: model.AddressInput{
 			Street:  customerAddrMap["street"].(string),
 			City:    customerAddrMap["city"].(string),
 			Zipcode: customerAddrMap["zipcode"].(string),
 		},
 	}
-	proposedLoanData := ProposedLoanData{
-		Tenure: proposedLoanInput["tenure"].(int),
-		Amount: proposedLoanInput["amount"].(float64),
+	proposedLoanIn := model.ProposedLoanInput{
+		Tenure: proposedLoanMap["tenure"].(int),
+		Amount: proposedLoanMap["amount"].(float64),
 	}
-	collateralData := CollateralData{
-		Category:           collateralInput["category"].(string),
-		Brand:              collateralInput["brand"].(string),
-		Variant:            collateralInput["variant"].(string),
-		ManufacturingYear:  collateralInput["manufacturing_year"].(int),
-		IsDocumentComplete: collateralInput["is_document_complete"].(bool),
+	collateralIn := model.CollateralInput{
+		Category:           collateralMap["category"].(string),
+		Brand:              collateralMap["brand"].(string),
+		Variant:            collateralMap["variant"].(string),
+		ManufacturingYear:  collateralMap["manufacturing_year"].(int),
+		IsDocumentComplete: collateralMap["is_document_complete"].(bool),
 	}
 
-	// Use p.Context for the context argument
-	// Placeholder "system_user_resolver" for createdBy
-	loanUUID, err := r.DB.CreateLoanApplicationDraft(p.Context, customerData, proposedLoanData, collateralData, "system_user_resolver")
+	createdLoanApp, err := r.DB.CreateLoanApplicationDraft(p.Context, customerIn, proposedLoanIn, collateralIn, "system_user_resolver")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create loan application draft in DB: %w", err)
 	}
-	return loanUUID, nil
+	// The GraphQL schema for this mutation expects an ID (string) to be returned.
+	return createdLoanApp.ID, nil
 }
 
 func (r *Resolver) GetLoanApplication(p graphql.ResolveParams) (interface{}, error) {
@@ -191,9 +188,11 @@ func (r *Resolver) GetLoanApplication(p graphql.ResolveParams) (interface{}, err
 	if err != nil {
 		return nil, fmt.Errorf("failed to get loan application from DB: %w", err)
 	}
-	if loanApp == nil { // DB method returns nil, nil for not found
+	if loanApp == nil {
 		return nil, nil
 	}
+	// This returns *model.LoanApplication. The GraphQL type returned by GetLoanApplicationType()
+	// in types.go needs to be compatible with this structure.
 	return loanApp, nil
 }
 
@@ -203,14 +202,10 @@ func (r *Resolver) SubmitLoanApplication(p graphql.ResolveParams) (interface{}, 
 		return nil, fmt.Errorf("missing 'uuid' argument")
 	}
 
-	// Placeholder "system_user_resolver" for updatedBy
 	success, err := r.DB.SubmitLoanApplication(p.Context, uuidArg, "system_user_resolver")
 	if err != nil {
 		return nil, fmt.Errorf("failed to submit loan application in DB: %w", err)
 	}
-	// The DB method returns false, nil if not found or not in DRAFT state.
-	// This needs to be translated to a GraphQL error or specific response.
-	// For now, if not successful and no error, means condition not met (e.g., not found or wrong state).
 	if !success && err == nil {
 	    return false, fmt.Errorf("loan application with UUID '%s' not found, not in DRAFT state, or already deleted", uuidArg)
 	}
@@ -223,12 +218,10 @@ func (r *Resolver) CancelLoanApplication(p graphql.ResolveParams) (interface{}, 
 		return nil, fmt.Errorf("missing 'uuid' argument")
 	}
 
-	// Placeholder "system_user_resolver" for updatedBy
 	success, err := r.DB.CancelLoanApplication(p.Context, uuidArg, "system_user_resolver")
 	if err != nil {
 		return nil, fmt.Errorf("failed to cancel loan application in DB: %w", err)
 	}
-	// Similar to submit, if not successful and no error, means condition not met.
 	if !success && err == nil {
 	    return false, fmt.Errorf("loan application with UUID '%s' not found or already deleted", uuidArg)
 	}
@@ -236,20 +229,46 @@ func (r *Resolver) CancelLoanApplication(p graphql.ResolveParams) (interface{}, 
 }
 
 var timeFormatterResolver = func(p graphql.ResolveParams) (interface{}, error) {
-	if t, ok := p.Source.(*LoanApplicationData); ok {
-		// Ensure field names match the GraphQL schema
+	// Check if the source is *model.LoanApplication
+	if loanApp, ok := p.Source.(*model.LoanApplication); ok {
 		if p.Info.FieldName == "createdAt" || p.Info.FieldName == "created_at" {
-			return t.CreatedAt.Format(time.RFC3339), nil
+			return loanApp.CreatedAt.Format(time.RFC3339), nil
 		}
 		if p.Info.FieldName == "updatedAt" || p.Info.FieldName == "updated_at" {
-			return t.UpdatedAt.Format(time.RFC3339), nil
+			return loanApp.UpdatedAt.Format(time.RFC3339), nil
 		}
-	} else if tTime, ok := p.Source.(time.Time); ok { // If source is already time.Time
+		// If we need to format dates from the nested CustomerData
+		if p.Info.FieldName == "customer" { // This would be for the whole customer object
+			// If specific fields within customer need formatting, the GraphQL schema
+			// would need resolvers on the Customer type's fields.
+			// For example, if customer.created_at needed formatting.
+			// This resolver is for fields on LoanApplication type.
+		}
+	} else if tTime, ok := p.Source.(time.Time); ok {
         return tTime.Format(time.RFC3339), nil
     }
-    
-    // Fallback or error if type assertion fails or field name doesn't match
-    // Check the type of p.Source if the above assertions fail
-    // log.Printf("timeFormatterResolver: Unhandled type for p.Source: %T for field %s", p.Source, p.Info.FieldName)
-	return nil, fmt.Errorf("failed to format time, source type: %T for field %s", p.Source, p.Info.FieldName)
+    // Fallback for other fields on LoanApplication that might be time.Time but not handled above,
+    // or if there's a type mismatch.
+	// Or, if called on a field of CustomerData that got passed here somehow.
+	// For CustomerData.CreatedAt/UpdatedAt, specific resolvers on CustomerType fields are better.
+	// This specific resolver is attached to LoanApplicationType's fields.
+
+	// Attempt to access nested customer fields if appropriate for the field name
+	// This part is tricky because this resolver is attached to LoanApplication fields.
+	// If p.Info.FieldName refers to a field *within* CustomerData (e.g. "customer.created_at" - not standard GQL path)
+	// it won't work directly.
+	// However, if schema design passes CustomerData as source for its own fields, then this might be relevant.
+	// For now, this resolver should primarily handle LoanApplication.CreatedAt and LoanApplication.UpdatedAt.
+
+	// If source is *model.Customer (e.g. if this resolver was mistakenly used for Customer fields)
+	if cust, ok := p.Source.(*model.Customer); ok {
+	    if p.Info.FieldName == "createdAt" || p.Info.FieldName == "created_at" {
+			return cust.CreatedAt.Format(time.RFC3339), nil
+		}
+		if p.Info.FieldName == "updatedAt" || p.Info.FieldName == "updated_at" {
+			return cust.UpdatedAt.Format(time.RFC3339), nil
+		}
+	}
+
+	return nil, fmt.Errorf("timeFormatterResolver: unhandled source type %T or field %s", p.Source, p.Info.FieldName)
 }
