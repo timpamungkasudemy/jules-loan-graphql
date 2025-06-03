@@ -1,15 +1,22 @@
 package graphqlhandler
 
 import (
+	"context" // Added for p.Context
 	"fmt"
 	"regexp"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/graphql-go/graphql"
+	"github.com/timpamungkas/loangraphql/db" // Added for DBService
+	// "github.com/google/uuid" // No longer needed here, DB layer handles UUID generation
 )
 
-// --- Validation Helpers ---
+// Resolver struct holds dependencies for resolver methods, like a DB connection.
+type Resolver struct {
+	DB *db.DBService
+}
+
+// --- Validation Helpers (copied as is from original) ---
 func isValidDate(dateStr string) bool {
 	_, err := time.Parse("2006-01-02", dateStr)
 	return err == nil
@@ -43,7 +50,7 @@ func validateCustomerInput(input map[string]interface{}) error {
 	fullName, _ := input["full_name"].(string)
 	dob, _ := input["date_of_birth"].(string)
 	idNumber, _ := input["id_number"].(string)
-	email, _ := input["email"].(string) // email can be empty string if not provided
+	email, _ := input["email"].(string)
 	phone, _ := input["phone"].(string)
 
 	if !regexp.MustCompile(`^[a-zA-Z ]{3,100}$`).MatchString(fullName) {
@@ -55,7 +62,7 @@ func validateCustomerInput(input map[string]interface{}) error {
 	if len(idNumber) == 0 || len(idNumber) > 25 {
 		return fmt.Errorf("id_number must be 1-25 characters")
 	}
-	if email != "" && !isValidEmail(email) { // Validate only if email is provided
+	if email != "" && !isValidEmail(email) {
 		return fmt.Errorf("email is not valid")
 	}
 	if !regexp.MustCompile(`^[0-9]{6,30}$`).MatchString(phone) {
@@ -89,10 +96,8 @@ func validateCollateralInput(input map[string]interface{}) error {
 	}
 	_, okBool := input["is_document_complete"].(bool)
 	if !okBool {
-		// This case should ideally be caught by GraphQL type system for non-null boolean
 		return fmt.Errorf("is_document_complete is required and must be a boolean")
 	}
-	// Category is enum, handled by GraphQL type system
 	return nil
 }
 
@@ -109,19 +114,18 @@ func validateProposedLoanInput(input map[string]interface{}) error {
 	return nil
 }
 
-// --- Resolver Functions ---
+// --- Resolver Methods ---
 
 var healthCheckResolver = func(p graphql.ResolveParams) (interface{}, error) {
 	return "OK", nil
 }
 
-var createLoanApplicationDraftResolver = func(p graphql.ResolveParams) (interface{}, error) {
+func (r *Resolver) CreateLoanApplicationDraft(p graphql.ResolveParams) (interface{}, error) {
 	dataArg, ok := p.Args["data"].(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("missing 'data' argument")
 	}
 
-	// Validate inputs
 	proposedLoanInput, _ := dataArg["proposed_loan"].(map[string]interface{})
 	collateralInput, _ := dataArg["collateral"].(map[string]interface{})
 	customerInput, _ := dataArg["customer"].(map[string]interface{})
@@ -136,149 +140,116 @@ var createLoanApplicationDraftResolver = func(p graphql.ResolveParams) (interfac
 		return nil, fmt.Errorf("invalid customer: %w", err)
 	}
 
-	// Map input to data structure
-	appUUID := uuid.New().String()
-	now := time.Now()
+	customerAddrMap, _ := customerInput["address"].(map[string]interface{})
 
-	customerAddrInput := customerInput["address"].(map[string]interface{})
-	newApp := &LoanApplicationData{
-		UUID:   appUUID,
-		Status: "DRAFT",
-		ProposedLoan: ProposedLoanData{
-			Tenure: proposedLoanInput["tenure"].(int),
-			Amount: proposedLoanInput["amount"].(float64),
-		},
-		Collateral: CollateralData{
-			Category:           collateralInput["category"].(string),
-			Brand:              collateralInput["brand"].(string),
-			Variant:            collateralInput["variant"].(string),
-			ManufacturingYear:  collateralInput["manufacturing_year"].(int),
-			IsDocumentComplete: collateralInput["is_document_complete"].(bool),
-		},
-		Customer: CustomerData{
-			FullName:    customerInput["full_name"].(string),
-			DateOfBirth: customerInput["date_of_birth"].(string),
-			IDNumber:    customerInput["id_number"].(string),
-			Email:       customerInput["email"].(string), // Already asserted as string or empty
-			Phone:       customerInput["phone"].(string),
-			Address: AddressData{
-				Street:  customerAddrInput["street"].(string),
-				City:    customerAddrInput["city"].(string),
-				Zipcode: customerAddrInput["zipcode"].(string),
-			},
-		},
-		CreatedAt: now,
-		UpdatedAt: now,
+	// Ensure email is correctly handled if missing from input (GraphQL might omit it if not provided by client)
+	emailStr := ""
+	if emailVal, ok := customerInput["email"]; ok {
+		emailStr, _ = emailVal.(string)
 	}
 
-	loanApplicationsMutex.Lock()
-	loanApplications[appUUID] = newApp
-	loanApplicationsMutex.Unlock()
+	customerData := CustomerData{
+		FullName:    customerInput["full_name"].(string),
+		DateOfBirth: customerInput["date_of_birth"].(string),
+		IDNumber:    customerInput["id_number"].(string),
+		Email:       emailStr,
+		Phone:       customerInput["phone"].(string),
+		Address: AddressData{
+			Street:  customerAddrMap["street"].(string),
+			City:    customerAddrMap["city"].(string),
+			Zipcode: customerAddrMap["zipcode"].(string),
+		},
+	}
+	proposedLoanData := ProposedLoanData{
+		Tenure: proposedLoanInput["tenure"].(int),
+		Amount: proposedLoanInput["amount"].(float64),
+	}
+	collateralData := CollateralData{
+		Category:           collateralInput["category"].(string),
+		Brand:              collateralInput["brand"].(string),
+		Variant:            collateralInput["variant"].(string),
+		ManufacturingYear:  collateralInput["manufacturing_year"].(int),
+		IsDocumentComplete: collateralInput["is_document_complete"].(bool),
+	}
 
-	return appUUID, nil
+	// Use p.Context for the context argument
+	// Placeholder "system_user_resolver" for createdBy
+	loanUUID, err := r.DB.CreateLoanApplicationDraft(p.Context, customerData, proposedLoanData, collateralData, "system_user_resolver")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create loan application draft in DB: %w", err)
+	}
+	return loanUUID, nil
 }
 
-var getLoanApplicationResolver = func(p graphql.ResolveParams) (interface{}, error) {
+func (r *Resolver) GetLoanApplication(p graphql.ResolveParams) (interface{}, error) {
 	uuidArg, ok := p.Args["uuid"].(string)
 	if !ok {
 		return nil, fmt.Errorf("missing 'uuid' argument")
 	}
 
-	loanApplicationsMutex.RLock()
-	app, exists := loanApplications[uuidArg]
-	loanApplicationsMutex.RUnlock()
-
-	if !exists {
-		return nil, nil // GraphQL spec: return null if not found for nullable type
+	loanApp, err := r.DB.GetLoanApplication(p.Context, uuidArg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get loan application from DB: %w", err)
 	}
-	// Map internal struct to the format expected by graphql.Field resolver
-	// This mapping is implicitly handled if LoanApplicationData fields match LoanApplication type fields
-	// and their Go types are compatible with what graphql-go expects (e.g. string for Date, Email)
-	return app, nil
+	if loanApp == nil { // DB method returns nil, nil for not found
+		return nil, nil
+	}
+	return loanApp, nil
 }
 
-var submitLoanApplicationResolver = func(p graphql.ResolveParams) (interface{}, error) {
+func (r *Resolver) SubmitLoanApplication(p graphql.ResolveParams) (interface{}, error) {
 	uuidArg, ok := p.Args["uuid"].(string)
 	if !ok {
 		return nil, fmt.Errorf("missing 'uuid' argument")
 	}
 
-	loanApplicationsMutex.Lock()
-	defer loanApplicationsMutex.Unlock()
-
-	app, exists := loanApplications[uuidArg]
-	if !exists {
-		return false, fmt.Errorf("loan application with UUID '%s' not found", uuidArg)
+	// Placeholder "system_user_resolver" for updatedBy
+	success, err := r.DB.SubmitLoanApplication(p.Context, uuidArg, "system_user_resolver")
+	if err != nil {
+		return nil, fmt.Errorf("failed to submit loan application in DB: %w", err)
 	}
-
-	if app.Status != "DRAFT" {
-		// Depending on business logic, could allow submission from other statuses or return error
-		return false, fmt.Errorf("loan application status is '%s', cannot submit", app.Status)
+	// The DB method returns false, nil if not found or not in DRAFT state.
+	// This needs to be translated to a GraphQL error or specific response.
+	// For now, if not successful and no error, means condition not met (e.g., not found or wrong state).
+	if !success && err == nil {
+	    return false, fmt.Errorf("loan application with UUID '%s' not found, not in DRAFT state, or already deleted", uuidArg)
 	}
-
-	app.Status = "SUBMITTED"
-	app.UpdatedAt = time.Now()
-	loanApplications[uuidArg] = app // Re-assign pointer if needed, though map stores pointer
-
-	return true, nil
+	return success, nil
 }
 
-var cancelLoanApplicationResolver = func(p graphql.ResolveParams) (interface{}, error) {
+func (r *Resolver) CancelLoanApplication(p graphql.ResolveParams) (interface{}, error) {
 	uuidArg, ok := p.Args["uuid"].(string)
 	if !ok {
 		return nil, fmt.Errorf("missing 'uuid' argument")
 	}
 
-	loanApplicationsMutex.Lock()
-	defer loanApplicationsMutex.Unlock()
-
-	app, exists := loanApplications[uuidArg]
-	if !exists {
-		return false, fmt.Errorf("loan application with UUID '%s' not found", uuidArg)
+	// Placeholder "system_user_resolver" for updatedBy
+	success, err := r.DB.CancelLoanApplication(p.Context, uuidArg, "system_user_resolver")
+	if err != nil {
+		return nil, fmt.Errorf("failed to cancel loan application in DB: %w", err)
 	}
-
-	// Add business logic here, e.g., cannot cancel if already processed
-	if app.Status == "CANCELLED" {
-		return true, nil // Already cancelled
+	// Similar to submit, if not successful and no error, means condition not met.
+	if !success && err == nil {
+	    return false, fmt.Errorf("loan application with UUID '%s' not found or already deleted", uuidArg)
 	}
-	if app.Status != "DRAFT" && app.Status != "SUBMITTED" { // Example: cannot cancel if in terminal state other than cancelled
-		return false, fmt.Errorf("loan application status is '%s', cannot cancel", app.Status)
-	}
-
-	app.Status = "CANCELLED"
-	app.UpdatedAt = time.Now()
-	loanApplications[uuidArg] = app
-
-	return true, nil
+	return success, nil
 }
 
-// Field resolver for LoanApplication.createdAt and LoanApplication.updatedAt to format time.Time
 var timeFormatterResolver = func(p graphql.ResolveParams) (interface{}, error) {
 	if t, ok := p.Source.(*LoanApplicationData); ok {
-		if p.Info.FieldName == "created_at" {
+		// Ensure field names match the GraphQL schema
+		if p.Info.FieldName == "createdAt" || p.Info.FieldName == "created_at" {
 			return t.CreatedAt.Format(time.RFC3339), nil
 		}
-		if p.Info.FieldName == "updated_at" {
+		if p.Info.FieldName == "updatedAt" || p.Info.FieldName == "updated_at" {
 			return t.UpdatedAt.Format(time.RFC3339), nil
 		}
-	}
-	return nil, fmt.Errorf("failed to format time")
+	} else if tTime, ok := p.Source.(time.Time); ok { // If source is already time.Time
+        return tTime.Format(time.RFC3339), nil
+    }
+    
+    // Fallback or error if type assertion fails or field name doesn't match
+    // Check the type of p.Source if the above assertions fail
+    // log.Printf("timeFormatterResolver: Unhandled type for p.Source: %T for field %s", p.Source, p.Info.FieldName)
+	return nil, fmt.Errorf("failed to format time, source type: %T for field %s", p.Source, p.Info.FieldName)
 }
-
-// Need to update loanApplicationType in types.go to use this resolver for createdAt and updatedAt
-// This subtask cannot modify types.go, so this is a note for future adjustment or it will be done when schema is built.
-// For now, the schema will be built with string types for these and expect the LoanApplicationData to provide them as strings.
-// Let's adjust LoanApplicationData to store string for CreatedAt/UpdatedAt to simplify for now.
-// (Correction: The LoanApplicationData struct already has time.Time, the resolver above is correct for formatting it.)
-// The LoanApplication GraphQL type in types.go uses graphql.String for created_at/updated_at.
-// So, the resolver for GetLoanApplication needs to ensure these are strings when it returns LoanApplicationData.
-// The `app` returned by getLoanApplicationResolver is a *LoanApplicationData.
-// graphql-go will look for fields like "CreatedAt" on this struct.
-// If LoanApplicationData.CreatedAt is time.Time, and loanApplicationType.Fields["created_at"] is graphql.String,
-// we need a resolver for the *field* "created_at" on the *type* "LoanApplication".
-
-// This will be done in schema.go by assigning this resolver to the fields of loanApplicationType.
-// For now, the type definition in types.go has these as graphql.String.
-// The LoanApplicationData struct has time.Time.
-// The default resolver will try to convert time.Time to string. The format might not be RFC3339.
-// So, assigning timeFormatterResolver to these fields in schema.go is the correct approach.

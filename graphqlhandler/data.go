@@ -1,20 +1,13 @@
 package graphqlhandler
 
 import (
-	"sync"
+	// "sync" // No longer needed as mutex is removed
 	"time"
 )
 
-// Using maps for simple in-memory storage
-// In a real app, use a database
-
-var (
-	loanApplications      = make(map[string]*LoanApplicationData)
-	loanApplicationsMutex = &sync.RWMutex{}
-)
-
 // Internal data structures for storage (matching GraphQL types but as Go structs)
-// These are separate from the graphql.Object definitions but will hold the data.
+// These are separate from the graphql.Object definitions but will hold the data for type definition purposes.
+// The actual data persistence is handled by the database via db/db.go and resolvers.go.
 
 type AddressData struct {
 	Street  string `json:"street"`
